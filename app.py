@@ -6,6 +6,9 @@ import plotly.graph_objects as go
 from datetime import datetime
 import json
 import io
+from collections import Counter
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
 
 st.set_page_config(
     page_title="Student Feedback Analytics System", 
@@ -213,11 +216,32 @@ st.markdown("""
         font-size: 0.7rem;
         color: var(--gray-600);
     }
+    
+    .priority-high {
+        background: #fef2f2;
+        border-left: 3px solid #dc2626;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+    }
+    
+    .priority-medium {
+        background: #fffbeb;
+        border-left: 3px solid #d97706;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+    }
+    
+    .priority-low {
+        background: #f0fdf4;
+        border-left: 3px solid #059669;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# CORE ANALYSIS FUNCTIONS (UNCHANGED)
+# CORE ANALYSIS FUNCTIONS (COMPLETELY UNCHANGED)
 # =========================
 
 def analyze_all_aspects(text):
@@ -385,7 +409,7 @@ def calculate_overall_score(results):
     return sum(scores) // len(scores)
 
 # =========================
-# BULK ANALYSIS FUNCTIONS
+# ENHANCED BULK ANALYSIS FUNCTIONS
 # =========================
 
 def analyze_bulk_feedback(df, text_column='feedback'):
@@ -400,16 +424,25 @@ def analyze_bulk_feedback(df, text_column='feedback'):
             neg_count = sum(1 for r in aspect_results.values() if r['sentiment'] == 'Negative')
             neutral_count = sum(1 for r in aspect_results.values() if r['sentiment'] == 'Neutral')
             
-            results_list.append({
+            # Extract additional metadata if available
+            row_data = {
                 'feedback_id': idx,
                 'feedback_text': feedback_text[:150] + ('...' if len(feedback_text) > 150 else ''),
+                'full_text': feedback_text,
                 'aspects_detected': len(aspect_results),
                 'positive_aspects': pos_count,
                 'negative_aspects': neg_count,
                 'neutral_aspects': neutral_count,
                 'overall_score': overall_score,
                 'aspect_details': aspect_results
-            })
+            }
+            
+            # Add any additional columns from original CSV
+            for col in df.columns:
+                if col not in ['feedback', 'feedback_text', 'full_text']:
+                    row_data[col] = row[col]
+            
+            results_list.append(row_data)
     return results_list
 
 def generate_bulk_insights(bulk_results):
@@ -418,7 +451,10 @@ def generate_bulk_insights(bulk_results):
         return {}
     
     aspect_aggregator = {}
+    all_scores = []
+    
     for result in bulk_results:
+        all_scores.append(result['overall_score'])
         for aspect, data in result['aspect_details'].items():
             if aspect not in aspect_aggregator:
                 aspect_aggregator[aspect] = {'positive': 0, 'negative': 0, 'neutral': 0, 'total_score': 0, 'count': 0}
@@ -432,16 +468,80 @@ def generate_bulk_insights(bulk_results):
         aspect_aggregator[aspect]['positive_pct'] = (aspect_aggregator[aspect]['positive'] / total) * 100
         aspect_aggregator[aspect]['negative_pct'] = (aspect_aggregator[aspect]['negative'] / total) * 100
     
-    avg_score = sum(r['overall_score'] for r in bulk_results) / total
-    total_positive = sum(r['positive_aspects'] for r in bulk_results)
-    total_negative = sum(r['negative_aspects'] for r in bulk_results)
+    avg_score = sum(all_scores) / total
+    score_std = pd.Series(all_scores).std() if len(all_scores) > 1 else 0
+    
+    # Calculate sentiment distribution across all feedbacks
+    feedback_sentiments = []
+    for result in bulk_results:
+        pos = result['positive_aspects']
+        neg = result['negative_aspects']
+        if pos > neg:
+            feedback_sentiments.append('Positive')
+        elif neg > pos:
+            feedback_sentiments.append('Negative')
+        else:
+            feedback_sentiments.append('Neutral')
+    
+    sentiment_counts = Counter(feedback_sentiments)
+    
+    # Generate priority matrix
+    priority_matrix = []
+    for aspect, agg in aspect_aggregator.items():
+        negative_pct = agg['negative_pct']
+        avg_score = agg['avg_score']
+        
+        if negative_pct > 30:
+            priority = "High"
+        elif negative_pct > 15:
+            priority = "Medium"
+        else:
+            priority = "Low"
+        
+        priority_matrix.append({
+            'aspect': aspect,
+            'negative_percentage': negative_pct,
+            'avg_score': avg_score,
+            'priority': priority
+        })
+    
+    priority_matrix.sort(key=lambda x: x['negative_percentage'], reverse=True)
+    
+    # Extract keywords from feedbacks for word cloud
+    all_words = []
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'so', 'for', 'nor', 'yet', 'of', 'to', 'in', 'on', 'at', 'with', 'without', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'will', 'would', 'could', 'should', 'this', 'that', 'these', 'those', 'it', 'they', 'we', 'you', 'he', 'she'}
+    
+    for result in bulk_results:
+        words = result['full_text'].lower().split()
+        all_words.extend([w for w in words if len(w) > 3 and w not in stop_words])
+    
+    word_freq = Counter(all_words).most_common(20)
+    
+    # Find top positive and negative feedback examples
+    positive_feedbacks = [r for r in bulk_results if r['positive_aspects'] > r['negative_aspects']]
+    negative_feedbacks = [r for r in bulk_results if r['negative_aspects'] > r['positive_aspects']]
+    
+    top_positive = sorted(positive_feedbacks, key=lambda x: x['overall_score'], reverse=True)[:3]
+    top_negative = sorted(negative_feedbacks, key=lambda x: x['overall_score'])[:3]
+    
+    # Correlation analysis between aspects
+    aspect_correlation = {}
+    aspects_list = list(aspect_aggregator.keys())
+    for aspect in aspects_list:
+        aspect_correlation[aspect] = {'positive_corr': [], 'negative_corr': []}
     
     return {
         'total_feedbacks': total,
         'avg_overall_score': avg_score,
-        'total_positive_aspects': total_positive,
-        'total_negative_aspects': total_negative,
+        'score_std': score_std,
+        'total_positive_aspects': sum(r['positive_aspects'] for r in bulk_results),
+        'total_negative_aspects': sum(r['negative_aspects'] for r in bulk_results),
+        'sentiment_distribution': sentiment_counts,
         'aspect_aggregator': aspect_aggregator,
+        'priority_matrix': priority_matrix,
+        'word_frequency': word_freq,
+        'top_positive_feedbacks': top_positive,
+        'top_negative_feedbacks': top_negative,
         'bulk_results': bulk_results
     }
 
@@ -455,8 +555,12 @@ def get_sample_csv():
             "The teaching is good but sometimes rushed. Assignments are fair but deadlines are too tight.",
             "Labs are well-organized and TAs are knowledgeable. The professor could be more engaging though.",
             "Worst course ever. Unfair grading and useless labs. No support from faculty.",
-            "The course content is relevant and practical. Workload is manageable. Would recommend!"
-        ]
+            "The course content is relevant and practical. Workload is manageable. Would recommend!",
+            "Professor is knowledgeable but the exam was too difficult. Lab sessions were helpful.",
+            "Great support from TAs but the course structure needs improvement. Too many deadlines."
+        ],
+        'course': ['CS101', 'CS101', 'CS201', 'CS201', 'CS101', 'CS301', 'CS301', 'CS201', 'CS101', 'CS301'],
+        'date': pd.date_range(start='2024-01-01', periods=10, freq='D')
     })
     return sample_data
 
@@ -467,7 +571,7 @@ def get_sample_csv():
 # Create tabs
 tab1, tab2 = st.tabs(["📝 Single Feedback Analysis", "📊 Bulk Feedback Analysis"])
 
-# ========== TAB 1: SINGLE FEEDBACK ANALYSIS (YOUR EXISTING CODE) ==========
+# ========== TAB 1: SINGLE FEEDBACK ANALYSIS (COMPLETELY UNCHANGED) ==========
 with tab1:
     st.markdown('<h1>Student Feedback Analytics System</h1>', unsafe_allow_html=True)
     st.markdown('<div class="subheader">Multi-dimensional analysis of student feedback with aspect-wise sentiment detection</div>', unsafe_allow_html=True)
@@ -681,10 +785,10 @@ with tab1:
     
     st.markdown('<div class="footer">Student Feedback Analytics System | Enhanced with Slang Support & Mixed Sentiment Detection</div>', unsafe_allow_html=True)
 
-# ========== TAB 2: BULK FEEDBACK ANALYSIS ==========
+# ========== TAB 2: BULK FEEDBACK ANALYSIS (ENHANCED) ==========
 with tab2:
     st.markdown("## Bulk Feedback Analysis")
-    st.markdown("Upload a CSV file containing multiple student feedback entries for batch analysis")
+    st.markdown("Upload a CSV file containing multiple student feedback entries for comprehensive batch analysis")
     
     col1, col2 = st.columns([2, 1])
     
@@ -692,7 +796,7 @@ with tab2:
         uploaded_file = st.file_uploader(
             "Upload CSV File",
             type=['csv'],
-            help="CSV file must contain a column named 'feedback' with the feedback text",
+            help="CSV file must contain a 'feedback' column. Optional: 'course', 'date', 'instructor' columns for deeper insights.",
             key="bulk_upload"
         )
     
@@ -720,7 +824,7 @@ with tab2:
     
     elif 'sample_df' in st.session_state:
         df = st.session_state['sample_df']
-        st.info("📋 Sample Dataset Loaded")
+        st.info("📋 Sample Dataset Loaded (10 feedback entries with course and date information)")
         st.dataframe(df.head(10), use_container_width=True)
         
         if st.button("📊 Analyze Sample Data", type="primary", use_container_width=True, key="bulk_analyze_sample"):
@@ -735,10 +839,10 @@ with tab2:
         insights = st.session_state['bulk_insights']
         
         st.markdown("---")
-        st.markdown("### Analysis Dashboard")
+        st.markdown("## Executive Dashboard")
         
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
+        # Key metrics row
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.markdown(f"""
             <div class="bulk-stat-card">
@@ -750,68 +854,228 @@ with tab2:
             st.markdown(f"""
             <div class="bulk-stat-card">
                 <div class="bulk-stat-value" style="color: #059669;">{insights['total_positive_aspects']}</div>
-                <div class="bulk-stat-label">TOTAL POSITIVE</div>
+                <div class="bulk-stat-label">POSITIVE MENTIONS</div>
             </div>
             """, unsafe_allow_html=True)
         with col3:
             st.markdown(f"""
             <div class="bulk-stat-card">
                 <div class="bulk-stat-value" style="color: #dc2626;">{insights['total_negative_aspects']}</div>
-                <div class="bulk-stat-label">TOTAL NEGATIVE</div>
+                <div class="bulk-stat-label">NEGATIVE MENTIONS</div>
             </div>
             """, unsafe_allow_html=True)
         with col4:
+            ratio = insights['total_positive_aspects'] / max(insights['total_negative_aspects'], 1)
+            st.markdown(f"""
+            <div class="bulk-stat-card">
+                <div class="bulk-stat-value">{ratio:.1f}<span style="font-size:0.8rem;">x</span></div>
+                <div class="bulk-stat-label">POS/NEG RATIO</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col5:
             gauge_color = "#059669" if insights['avg_overall_score'] >= 70 else ("#d97706" if insights['avg_overall_score'] >= 50 else "#dc2626")
             st.markdown(f"""
             <div class="bulk-stat-card">
                 <div class="bulk-stat-value" style="color: {gauge_color};">{insights['avg_overall_score']:.0f}<span style="font-size:0.8rem;">/100</span></div>
-                <div class="bulk-stat-label">AVG SCORE</div>
+                <div class="bulk-stat-label">AVG SATISFACTION</div>
             </div>
             """, unsafe_allow_html=True)
         
         # Overall score gauge
         st.markdown("---")
-        st.markdown("#### Average Satisfaction Score")
+        st.markdown("#### Average Satisfaction Score Across All Feedback")
         gauge_color = "#059669" if insights['avg_overall_score'] >= 70 else ("#d97706" if insights['avg_overall_score'] >= 50 else "#dc2626")
         st.markdown(f"""
         <div style="background: #e5e7eb; border-radius: 9999px; height: 0.5rem; overflow: hidden;">
             <div style="background: {gauge_color}; width: {insights['avg_overall_score']}%; height: 0.5rem; border-radius: 9999px;"></div>
         </div>
-        <div style="display: flex; justify-content: space-between; margin-top: 0.5rem;">
-            <span style="font-size: 0.75rem; color: #6b7280;">Dissatisfied</span>
-            <span style="font-size: 0.75rem; color: #6b7280;">Neutral</span>
-            <span style="font-size: 0.75rem; color: #6b7280;">Satisfied</span>
+        <div style="display: flex; justify-content: space-between; margin-top: 0.25rem;">
+            <span style="font-size: 0.7rem; color: #6b7280;">Poor (0-40)</span>
+            <span style="font-size: 0.7rem; color: #6b7280;">Fair (40-60)</span>
+            <span style="font-size: 0.7rem; color: #6b7280;">Good (60-80)</span>
+            <span style="font-size: 0.7rem; color: #6b7280;">Excellent (80-100)</span>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Two column layout for charts
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Sentiment distribution pie chart
+            st.markdown("#### Overall Sentiment Distribution")
+            sentiment_df = pd.DataFrame({
+                'Sentiment': list(insights['sentiment_distribution'].keys()),
+                'Count': list(insights['sentiment_distribution'].values())
+            })
+            fig = px.pie(sentiment_df, values='Count', names='Sentiment', 
+                        color='Sentiment', color_discrete_map={'Positive': '#059669', 'Negative': '#dc2626', 'Neutral': '#d97706'},
+                        hole=0.4)
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Score distribution histogram
+            st.markdown("#### Score Distribution")
+            scores = [r['overall_score'] for r in insights['bulk_results']]
+            fig = px.histogram(x=scores, nbins=20, title="", 
+                              labels={'x': 'Satisfaction Score', 'y': 'Frequency'},
+                              color_discrete_sequence=['#2563eb'])
+            fig.add_vline(x=insights['avg_overall_score'], line_dash="dash", line_color="red", 
+                         annotation_text=f"Avg: {insights['avg_overall_score']:.0f}")
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
         
         # Aspect distribution chart
         if insights['aspect_aggregator']:
             st.markdown("---")
-            st.markdown("#### Sentiment Distribution by Aspect")
+            st.markdown("#### Sentiment Distribution by Dimension")
             
             aspect_data = []
             for aspect, agg in insights['aspect_aggregator'].items():
+                total = agg['positive'] + agg['negative'] + agg['neutral']
                 aspect_data.append({
-                    'Aspect': aspect,
+                    'Dimension': aspect,
                     'Positive': agg['positive'],
                     'Negative': agg['negative'],
                     'Neutral': agg['neutral'],
-                    'Avg Score': round(agg['avg_score'], 1)
+                    'Avg Score': round(agg['avg_score'], 1),
+                    'Total Mentions': total
                 })
             
             aspect_df = pd.DataFrame(aspect_data)
             
             fig = go.Figure(data=[
-                go.Bar(name='Positive', x=aspect_df['Aspect'], y=aspect_df['Positive'], marker_color='#059669'),
-                go.Bar(name='Negative', x=aspect_df['Aspect'], y=aspect_df['Negative'], marker_color='#dc2626'),
-                go.Bar(name='Neutral', x=aspect_df['Aspect'], y=aspect_df['Neutral'], marker_color='#d97706')
+                go.Bar(name='Positive', x=aspect_df['Dimension'], y=aspect_df['Positive'], marker_color='#059669'),
+                go.Bar(name='Negative', x=aspect_df['Dimension'], y=aspect_df['Negative'], marker_color='#dc2626'),
+                go.Bar(name='Neutral', x=aspect_df['Dimension'], y=aspect_df['Neutral'], marker_color='#d97706')
             ])
-            fig.update_layout(barmode='stack', height=450, title="Sentiment Count by Dimension")
+            fig.update_layout(barmode='stack', height=450, title="Mentions by Dimension")
             st.plotly_chart(fig, use_container_width=True)
             
-            # Aspect scores table
+            # Dimension scores table
             st.markdown("#### Dimension Performance Scores")
-            st.dataframe(aspect_df, use_container_width=True, hide_index=True)
+            st.dataframe(aspect_df.sort_values('Avg Score', ascending=False), use_container_width=True, hide_index=True)
+        
+        # Priority Matrix
+        st.markdown("---")
+        st.markdown("#### Improvement Priority Matrix")
+        st.markdown("Dimensions with high negative percentage need immediate attention")
+        
+        for item in insights['priority_matrix'][:7]:
+            if item['priority'] == 'High':
+                st.markdown(f"""
+                <div class="priority-high">
+                    <strong>🔴 HIGH PRIORITY:</strong> {item['aspect']} - {item['negative_percentage']:.1f}% negative feedback (Avg Score: {item['avg_score']:.0f})
+                </div>
+                """, unsafe_allow_html=True)
+            elif item['priority'] == 'Medium':
+                st.markdown(f"""
+                <div class="priority-medium">
+                    <strong>🟡 MEDIUM PRIORITY:</strong> {item['aspect']} - {item['negative_percentage']:.1f}% negative feedback (Avg Score: {item['avg_score']:.0f})
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="priority-low">
+                    <strong>🟢 LOW PRIORITY:</strong> {item['aspect']} - {item['negative_percentage']:.1f}% negative feedback (Avg Score: {item['avg_score']:.0f})
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Word Cloud / Key Themes
+        st.markdown("---")
+        st.markdown("#### Key Themes from Feedback")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Top Keywords**")
+            keyword_df = pd.DataFrame(insights['word_frequency'], columns=['Keyword', 'Frequency'])
+            st.dataframe(keyword_df, use_container_width=True, hide_index=True)
+        
+        with col2:
+            # Simple bar chart of top keywords
+            keywords = [k for k, v in insights['word_frequency'][:10]]
+            freqs = [v for k, v in insights['word_frequency'][:10]]
+            fig = px.bar(x=freqs, y=keywords, orientation='h', title="Most Frequent Terms",
+                        labels={'x': 'Frequency', 'y': ''}, color=freqs, color_continuous_scale='Blues')
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Top Positive and Negative Examples
+        st.markdown("---")
+        st.markdown("#### Representative Feedback Examples")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**📈 Best Feedback Examples**")
+            for fb in insights['top_positive_feedbacks']:
+                with st.expander(f"Score: {fb['overall_score']}/100"):
+                    st.write(fb['full_text'])
+        
+        with col2:
+            st.markdown("**📉 Needs Improvement Examples**")
+            for fb in insights['top_negative_feedbacks']:
+                with st.expander(f"Score: {fb['overall_score']}/100"):
+                    st.write(fb['full_text'])
+        
+        # Course-wise breakdown (if course column exists)
+        if 'course' in df.columns and 'course' in insights['bulk_results'][0]:
+            st.markdown("---")
+            st.markdown("#### Course-wise Analysis")
+            
+            course_stats = {}
+            for result in insights['bulk_results']:
+                course = result.get('course', 'Unknown')
+                if course not in course_stats:
+                    course_stats[course] = {'scores': [], 'positive': 0, 'negative': 0}
+                course_stats[course]['scores'].append(result['overall_score'])
+                course_stats[course]['positive'] += result['positive_aspects']
+                course_stats[course]['negative'] += result['negative_aspects']
+            
+            course_data = []
+            for course, stats in course_stats.items():
+                avg_score = sum(stats['scores']) / len(stats['scores'])
+                total = stats['positive'] + stats['negative']
+                pos_pct = (stats['positive'] / total * 100) if total > 0 else 0
+                course_data.append({
+                    'Course': course,
+                    'Feedbacks': len(stats['scores']),
+                    'Avg Score': round(avg_score, 1),
+                    'Positive %': round(pos_pct, 1),
+                    'Total Mentions': total
+                })
+            
+            course_df = pd.DataFrame(course_data)
+            fig = px.bar(course_df, x='Course', y='Avg Score', title="Satisfaction Score by Course",
+                        color='Avg Score', color_continuous_scale='RdYlGn', text='Avg Score')
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(course_df, use_container_width=True, hide_index=True)
+        
+        # Temporal trends (if date column exists)
+        if 'date' in df.columns and 'date' in insights['bulk_results'][0]:
+            st.markdown("---")
+            st.markdown("#### Temporal Trends")
+            
+            date_stats = {}
+            for result in insights['bulk_results']:
+                date = pd.to_datetime(result.get('date')).strftime('%Y-%m')
+                if date not in date_stats:
+                    date_stats[date] = {'scores': [], 'count': 0}
+                date_stats[date]['scores'].append(result['overall_score'])
+                date_stats[date]['count'] += 1
+            
+            date_data = []
+            for date, stats in sorted(date_stats.items()):
+                avg_score = sum(stats['scores']) / len(stats['scores'])
+                date_data.append({'Month': date, 'Avg Score': avg_score, 'Feedbacks': stats['count']})
+            
+            date_df = pd.DataFrame(date_data)
+            fig = px.line(date_df, x='Month', y='Avg Score', title="Satisfaction Trend Over Time",
+                         markers=True, line_shape='linear')
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
         
         # Detailed results table
         st.markdown("---")
@@ -831,6 +1095,22 @@ with tab2:
         ])
         
         st.dataframe(results_df, use_container_width=True, hide_index=True)
+        
+        # Summary statistics
+        st.markdown("---")
+        st.markdown("#### Statistical Summary")
+        
+        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+        with stat_col1:
+            st.metric("Mean Score", f"{insights['avg_overall_score']:.1f}")
+        with stat_col2:
+            st.metric("Std Deviation", f"{insights['score_std']:.1f}")
+        with stat_col3:
+            min_score = min(r['overall_score'] for r in insights['bulk_results'])
+            st.metric("Min Score", f"{min_score}")
+        with stat_col4:
+            max_score = max(r['overall_score'] for r in insights['bulk_results'])
+            st.metric("Max Score", f"{max_score}")
         
         # Export functionality
         st.markdown("---")
