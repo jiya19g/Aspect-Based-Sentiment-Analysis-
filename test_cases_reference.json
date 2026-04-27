@@ -1,0 +1,297 @@
+{
+  "suite": "Student Feedback Analytics System",
+  "version": "1.0.0",
+  "total_tests": 24,
+  "categories": [
+    {
+      "id": "CAT-1",
+      "name": "NLP Engine — Slang & Normalisation",
+      "description": "Validates slang mapping, normalisation pipeline, aspect routing, and negation handling",
+      "test_count": 6,
+      "tests": [
+        {
+          "id": "TC-01",
+          "description": "'prof is chill' maps to Positive Teaching Quality",
+          "input": "prof is chill",
+          "expected_aspect": "Teaching Quality",
+          "expected_sentiment": "Positive",
+          "mechanism": "SLANG_MAP: prof→professor, chill→good; triggers Teaching Quality via 'professor'",
+          "priority": "high"
+        },
+        {
+          "id": "TC-02",
+          "description": "'exams are brutal' maps to Negative Assessment & Evaluation",
+          "input": "exams are brutal",
+          "expected_aspect": "Assessment & Evaluation",
+          "expected_sentiment": "Negative",
+          "mechanism": "SLANG_MAP: brutal→very bad; triggers Assessment via 'exams'; 'very bad' is strong_negative",
+          "priority": "high"
+        },
+        {
+          "id": "TC-03",
+          "description": "'labs are useless' maps to Negative Practical & Lab",
+          "input": "labs are useless",
+          "expected_aspect": "Practical & Lab",
+          "expected_sentiment": "Negative",
+          "mechanism": "SLANG_MAP: useless→bad; triggers Practical via 'labs'; strong_negative match",
+          "priority": "high"
+        },
+        {
+          "id": "TC-04",
+          "description": "'mid' normalises to 'average' in SLANG_MAP",
+          "input": "the course is mid",
+          "expected_normalised_contains": "average",
+          "mechanism": "SLANG_MAP: mid→average; word-boundary regex replacement",
+          "priority": "medium"
+        },
+        {
+          "id": "TC-05",
+          "description": "'lit' normalises to 'excellent' in SLANG_MAP",
+          "input": "the teaching was lit",
+          "expected_normalised_contains": "excellent",
+          "mechanism": "SLANG_MAP: lit→excellent",
+          "priority": "medium"
+        },
+        {
+          "id": "TC-06",
+          "description": "Negation pattern prevents 'not helpful TAs' from resolving Positive",
+          "input": "not helpful TAs",
+          "expected_aspect": "Mentoring & Support",
+          "expected_sentiment_not": "Positive",
+          "mechanism": "NEGATION_PATTERN matches 'not'; pos_score *= 0.2 reduces Positive signal",
+          "priority": "high"
+        }
+      ]
+    },
+    {
+      "id": "CAT-2",
+      "name": "Bulk CSV Processing",
+      "description": "End-to-end batch ingestion: row count, column validation, skip logic, and output schema",
+      "test_count": 5,
+      "tests": [
+        {
+          "id": "TC-07",
+          "description": "14-row sample CSV produces exactly 14 results",
+          "input": "sample_feedback_data.csv (14 rows, all feedback length > 10)",
+          "expected_result_count": 14,
+          "priority": "high"
+        },
+        {
+          "id": "TC-08",
+          "description": "CSV missing 'feedback' column is detected as invalid",
+          "input": "CSV with columns: ['name', 'score'] only",
+          "expected_behavior": "Error message shown; analysis not attempted",
+          "priority": "high"
+        },
+        {
+          "id": "TC-09",
+          "description": "Short feedback entries (<=10 chars) are skipped",
+          "input": ["ok", "The professor explains concepts really well, fair exams."],
+          "expected_result_count": 1,
+          "skipped_entries": ["ok"],
+          "priority": "medium"
+        },
+        {
+          "id": "TC-10",
+          "description": "Each bulk result contains all required output keys",
+          "input": "sample_feedback_data.csv",
+          "expected_keys": ["feedback_id", "overall_score", "positive_aspects", "negative_aspects", "neutral_aspects", "aspect_details"],
+          "priority": "high"
+        },
+        {
+          "id": "TC-11",
+          "description": "All overall_score values fall within 10–100 range",
+          "input": "sample_feedback_data.csv",
+          "expected_score_min": 10,
+          "expected_score_max": 100,
+          "priority": "medium"
+        }
+      ]
+    },
+    {
+      "id": "CAT-3",
+      "name": "Dashboard Charts & Visualisations",
+      "description": "Validates data structures that power Plotly charts and KPI metric cards",
+      "test_count": 5,
+      "tests": [
+        {
+          "id": "TC-12",
+          "description": "Sentiment distribution totals match total feedback count",
+          "input": "generate_bulk_insights() on 14-row sample",
+          "expected_behavior": "sentiment_distribution values sum to total_feedbacks",
+          "chart": "Pie chart — sentiment distribution",
+          "priority": "high"
+        },
+        {
+          "id": "TC-13",
+          "description": "All overall scores are within the valid 10–95 range",
+          "input": "bulk_results overall_score array",
+          "expected_score_min": 10,
+          "expected_score_max": 95,
+          "chart": "Score distribution histogram",
+          "priority": "medium"
+        },
+        {
+          "id": "TC-14",
+          "description": "Aspect aggregator contains all 7 analysis dimensions",
+          "input": "generate_bulk_insights() aspect_aggregator",
+          "expected_dimensions": [
+            "Teaching Quality",
+            "Assessment & Evaluation",
+            "Practical & Lab",
+            "Mentoring & Support",
+            "Course Design & Workload",
+            "Teaching Methodology",
+            "Learning Outcomes"
+          ],
+          "chart": "Stacked bar chart by dimension",
+          "priority": "high"
+        },
+        {
+          "id": "TC-15",
+          "description": "Faculty stats are sorted by avg score descending",
+          "input": "faculty_stats computed from bulk_results",
+          "expected_behavior": "DataFrame sorted ascending=False on Avg Score column",
+          "chart": "Faculty bar chart",
+          "priority": "medium"
+        },
+        {
+          "id": "TC-16",
+          "description": "Satisfaction gauge uses correct colour thresholds",
+          "input": "avg_overall_score = 78",
+          "expected_gauge_color": "#15803d",
+          "color_rules": {
+            ">=70": "#15803d (green)",
+            ">=50": "#92400e (amber)",
+            "<50": "#b91c1c (red)"
+          },
+          "chart": "Satisfaction gauge bar",
+          "priority": "low"
+        }
+      ]
+    },
+    {
+      "id": "CAT-4",
+      "name": "Sample Dataset & Interactive Loading",
+      "description": "Validates the built-in sample dataset schema and full pipeline execution",
+      "test_count": 3,
+      "tests": [
+        {
+          "id": "TC-17",
+          "description": "'Load Sample Dataset' populates exactly 14 rows",
+          "input": "get_sample_csv() call",
+          "expected_row_count": 14,
+          "priority": "high"
+        },
+        {
+          "id": "TC-18",
+          "description": "Sample CSV contains all four required columns",
+          "input": "get_sample_csv() DataFrame columns",
+          "expected_columns": ["feedback", "faculty", "course", "semester"],
+          "priority": "high"
+        },
+        {
+          "id": "TC-19",
+          "description": "'Analyze Sample Data' runs full pipeline and populates all insights",
+          "input": "get_sample_csv() → analyze_bulk_feedback → generate_bulk_insights",
+          "expected_behavior": "total_feedbacks > 0, avg_overall_score > 0, aspect_aggregator non-empty",
+          "priority": "high"
+        }
+      ]
+    },
+    {
+      "id": "CAT-5",
+      "name": "Multi-Aspect Analysis & Filtering",
+      "description": "Contrast clause splitting, multi-aspect detection, and filter_bulk_results correctness",
+      "test_count": 4,
+      "tests": [
+        {
+          "id": "TC-20",
+          "description": "Mixed feedback triggers 3 or more distinct aspects",
+          "input": "Great teaching, terrible labs, helpful TAs",
+          "expected_min_aspects": 3,
+          "expected_aspects_include": ["Teaching Quality", "Practical & Lab", "Mentoring & Support"],
+          "priority": "high"
+        },
+        {
+          "id": "TC-21",
+          "description": "Contrast detection splits 'but' clause into Positive + Negative",
+          "input": "Professor explains very well but exams are too hard and grading is unfair",
+          "expected_sentiments": ["Positive", "Negative"],
+          "mechanism": "split_into_clauses splits on '\\s+but\\s+'; each clause scored independently",
+          "priority": "high"
+        },
+        {
+          "id": "TC-22",
+          "description": "Faculty filter 'Dr. Garcia' returns exactly 1 result",
+          "input": {
+            "dataset": "sample_feedback_data.csv",
+            "filter": { "faculty": "Dr. Garcia" }
+          },
+          "expected_result_count": 1,
+          "priority": "high"
+        },
+        {
+          "id": "TC-23",
+          "description": "Course filter 'CS101' returns only CS101 rows",
+          "input": {
+            "dataset": "sample_feedback_data.csv",
+            "filter": { "course": "CS101" }
+          },
+          "expected_all_course": "CS101",
+          "expected_min_count": 1,
+          "priority": "medium"
+        }
+      ]
+    },
+    {
+      "id": "CAT-6",
+      "name": "Export & End-to-End Pipeline",
+      "description": "CSV export schema validation and round-trip integrity check",
+      "test_count": 1,
+      "tests": [
+        {
+          "id": "TC-24",
+          "description": "Exported CSV contains all required display columns and survives round-trip",
+          "input": "analyze_bulk_feedback → build export_df → to_csv → read_csv",
+          "expected_columns": ["ID", "Feedback", "Faculty", "Course", "Aspects", "Positive", "Negative", "Score"],
+          "expected_behavior": "Row count and column set identical before and after CSV serialisation",
+          "priority": "high"
+        }
+      ]
+    }
+  ],
+  "edge_cases": [
+    {
+      "id": "EC-01",
+      "description": "Empty string input returns empty dict",
+      "input": "",
+      "expected": "{}"
+    },
+    {
+      "id": "EC-02",
+      "description": "Single-word input returns empty dict",
+      "input": "ok",
+      "expected": "{}"
+    },
+    {
+      "id": "EC-03",
+      "description": "calculate_overall_score returns None for empty input",
+      "input": "{}",
+      "expected": "None"
+    },
+    {
+      "id": "EC-04",
+      "description": "generate_insights returns correct strengths/weaknesses structure",
+      "input": {
+        "Teaching Quality": { "sentiment": "Positive", "confidence": 0.85, "score": 80 },
+        "Practical & Lab":  { "sentiment": "Negative", "confidence": 0.80, "score": 25 }
+      },
+      "expected": {
+        "strengths": ["Teaching Quality"],
+        "weaknesses": ["Practical & Lab"],
+        "recommendations_count": 2
+      }
+    }
+  ]
+}
