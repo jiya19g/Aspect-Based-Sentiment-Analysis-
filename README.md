@@ -12,7 +12,6 @@ Built as a final year B.Tech major project at **SRM Institute of Science and Tec
 ## 🖥️ Main Dashboard
 
 ![Dashboard](<img width="894" height="480" alt="image" src="https://github.com/user-attachments/assets/f94b9109-12a6-46d8-85ca-442eecdd3f3e" />
-)
 
 *Fig 4.6 Dashboard*
 
